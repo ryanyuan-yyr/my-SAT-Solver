@@ -4,7 +4,7 @@ bool exclusive_or(bool lhs, bool rhs)
     return (lhs && !rhs) || (!lhs && rhs);
 }
 
-std::optional<bool> variableValue2optional(int variableValue)
+std::optional<bool> variableValue2optional(VariableValue variableValue)
 {
     if (variableValue == 0)
         return false;
@@ -14,10 +14,15 @@ std::optional<bool> variableValue2optional(int variableValue)
         return std::nullopt;
 }
 
-int optional2variableValue(std::optional<bool> value)
+VariableValue optional2variableValue(std::optional<bool> value)
 {
     if (value.has_value())
-        return static_cast<int>(value.value());
+        return value.value() ? TRUE : FALSE;
     else
-        return 3;
+        return UNDECIDED;
+}
+
+VariableValue bool2variableValue(bool value)
+{
+    return static_cast<VariableValue>(value);
 }

@@ -1,12 +1,15 @@
 #include <vector>
 #include <unordered_map>
 #include <unordered_set>
+#include <set>
 #include <optional>
 #include <queue>
 #include <deque>
 #include <cassert>
 #include <iterator>
 #include <array>
+#include <iostream>
+#include <algorithm>
 #include "utility.hpp"
 
 #ifndef SAT_SOLVER
@@ -34,13 +37,6 @@ public:
     class Clause;
     class Variable;
     class ImplicationGraph;
-
-    enum VariableValue
-    {
-        FALSE,
-        TRUE,
-        UNDECIDED,
-    };
 
     struct Literal
     {
@@ -110,22 +106,37 @@ public:
          */
         void update();
 
-        bool assign(VariableID variableID, VariableValue variableValue)
+    private:
+        void change_assignment(VariableID variableID, VariableValue from, VariableValue to)
         {
-            auto oldValue = sat_solver.get_variable(variableID).value;
-            if (oldValue != variableValue)
-            {
-                auto &literal = literals[variableID];
-                literals_by_value[literal.get_value_if(oldValue)].erase(variableID);
-                literals_by_value[literal.get_value_if(variableValue)].insert(variableID);
+            auto &literal = literals[variableID];
+            assert(literals_by_value[literal.get_value_if(from)].erase(variableID) == 1);
+            assert(literals_by_value[literal.get_value_if(to)].insert(variableID).second);
+        }
 
-                if (to_decide_num() == 1)
-                    sat_solver.unipropagateQueue.push_back(clauseID);
-            }
+    public:
+        /**
+         * @brief `assign` will not remove clause from unipropagation queue
+         *
+         * @param variableID
+         * @param variableValue
+         * @return true
+         * @return false
+         */
+        bool assign(VariableID variableID, bool b_variableValue)
+        {
+            change_assignment(variableID, UNDECIDED, bool2variableValue(b_variableValue));
+            if (to_decide_num() == 1)
+                sat_solver.unipropagateQueue.push_back(clauseID);
             if (is_conflict())
                 return false;
             else
                 return true;
+        }
+
+        void reset(VariableID variableID)
+        {
+            change_assignment(variableID, sat_solver.get_variable(variableID).value, UNDECIDED);
         }
 
         bool is_conflict()
@@ -191,10 +202,12 @@ public:
     {
     private:
         SATSolver &sat_solver;
+
+    public:
         struct Node
         {
             VariableID variableID;
-            size_t dicision_level;
+            size_t decision_level;
 
             /**
              * @brief If the node is a decision, derive_from is nullopt.
@@ -202,6 +215,11 @@ public:
              *
              */
             optional<ClauseID> derive_from;
+
+            bool is_decision_node() const
+            {
+                return !derive_from.has_value();
+            }
         };
 
         struct DecisionNode
@@ -209,6 +227,9 @@ public:
             // Position of the decision node in the stack
             Index decisionPos;
         };
+
+    private:
+        vector<Node> stack;
 
         /**
          * @brief decision_points[dl] info of decision node at level `dl`
@@ -220,24 +241,42 @@ public:
     public:
         ImplicationGraph(SATSolver &sat_solver) : sat_solver(sat_solver) {}
 
-        vector<Node> stack;
+        const auto &operator[](Index index) const
+        {
+            return stack[index];
+        }
+
+        const auto &back()
+        {
+            return stack.back();
+        }
+
+        auto size()
+        {
+            return stack.size();
+        }
 
         size_t get_decision_level()
         {
-            return decision_points.size() - 1;
+            return decision_points.size();
         }
 
         void push_propagate(VariableID variableID, ClauseID derive_from)
         {
             var2pos[variableID] = stack.size();
             stack.push_back({variableID, get_decision_level(), derive_from});
+
+            sat_solver.log_stream << "[Implication Graph] "
+                                  << "L" << get_decision_level() << " " << variableID << " " << sat_solver.get_variable(variableID).value << " \n";
         }
 
         void push_decision_node(VariableID variableID)
         {
             var2pos[variableID] = stack.size();
+            decision_points.push_back({stack.size()});
             stack.push_back({variableID, get_decision_level(), nullopt});
-            decision_points.push_back({stack.size() - 1});
+            sat_solver.log_stream << "[Implication Graph] "
+                                  << "L" << get_decision_level() << " " << variableID << " " << sat_solver.get_variable(variableID).value << " \n";
         }
 
         void pop()
@@ -262,13 +301,12 @@ public:
             auto &init_learnt_clause = sat_solver.get_clause(conflict_clause).get_literals();
             assert(init_learnt_clause.find(stack.back().variableID) != init_learnt_clause.end());
             unordered_set<Index> other_DL_nodes;
-            priority_queue<Index, vector<Index>, std::greater<Index>> cur_DL_nodes;
+            set<Index, std::greater<Index>> cur_DL_nodes;
             for (auto &varID_literal : init_learnt_clause)
             {
-                auto node_pos = var2pos[varID_literal.first];
-                if (stack[node_pos].dicision_level == get_decision_level())
-
-                    cur_DL_nodes.push(node_pos);
+                Index node_pos = var2pos[varID_literal.first];
+                if (stack[node_pos].decision_level == get_decision_level())
+                    cur_DL_nodes.insert(node_pos);
                 else
                     other_DL_nodes.insert(node_pos);
             }
@@ -276,28 +314,50 @@ public:
 
             while (cur_DL_nodes.size() > 1)
             {
-                Index cur_node_pos = cur_DL_nodes.top();
-                assert(stack[cur_node_pos].derive_from.has_value());
-                cur_DL_nodes.pop();
+                Index cur_node_pos = cur_DL_nodes.begin().operator*();
+                cur_DL_nodes.erase(cur_DL_nodes.begin());
                 auto &cur_clause_literals = sat_solver.get_clause(stack[cur_node_pos].derive_from.value()).get_literals();
                 for (auto &varID_literal : cur_clause_literals)
                 {
-                    if (varID_literal.first != stack[cur_node_pos].variableID)
+                    auto var_id = varID_literal.first;
+                    if (var_id != stack[cur_node_pos].variableID)
                     {
-                        if (stack[cur_node_pos].dicision_level == get_decision_level())
-
-                            cur_DL_nodes.push(cur_node_pos);
+                        if (stack[var2pos[var_id]].decision_level == get_decision_level())
+                            cur_DL_nodes.insert(var2pos[var_id]);
                         else
-                            other_DL_nodes.insert(cur_node_pos);
+                            other_DL_nodes.insert(var2pos[var_id]);
                     }
                 }
             }
             assert(cur_DL_nodes.size() == 1);
             vector<Index> learnt_clause_pos;
-            learnt_clause_pos.push_back(cur_DL_nodes.top());
+            learnt_clause_pos.push_back(cur_DL_nodes.begin().operator*());
             copy(other_DL_nodes.begin(), other_DL_nodes.end(), back_inserter(learnt_clause_pos));
+            return learnt_clause_pos;
         }
     };
+
+    /**
+     * @brief TODO Dummie dicision policy for now.
+     *
+     */
+    class DecisionPolicy
+    {
+    private:
+        SATSolver &sat_solver;
+
+    public:
+        DecisionPolicy(SATSolver &sat_solver) : sat_solver(sat_solver) {}
+
+        pair<VariableID, bool> operator()() const
+        {
+            return {sat_solver.variables_by_value[UNDECIDED].begin().operator*(), true};
+        }
+    };
+
+    friend class DecisionPolicy;
+
+    ostream &log_stream;
 
     vector<size_t> VarID2originalName;
     vector<Clause> clauses;
@@ -311,8 +371,9 @@ public:
 
     deque<ClauseID> unipropagateQueue;
     ImplicationGraph implicationGraph;
+    DecisionPolicy decisionPolicy;
 
-    SATSolver() : implicationGraph(*this) {}
+    SATSolver(ostream &log_stream = cerr) : log_stream(log_stream), implicationGraph(*this), decisionPolicy(*this) {}
 
     /**
      * @brief Input specification: Container<Container<pair<bool, size_t>>>
@@ -347,6 +408,7 @@ public:
                     OriginalName2varID[liter_iter->second] = cur_var_id;
                     VarID2originalName.push_back(liter_iter->second);
                     variables.push_back(Variable(*this, cur_var_id));
+                    variables_by_value[UNDECIDED].insert(cur_var_id);
                 }
                 else
                 {
@@ -356,20 +418,32 @@ public:
                 cur_clause.add_literal(cur_var_id, liter_iter->first); // TODO insert may fail.
                 liter_iter++;
             }
-            if (cur_clause.to_decide_num() == 1)
-                unipropagateQueue.push_back(cur_clause.get_clause_id());
-            clauses.push_back(cur_clause);
+            add_clause(std::move(cur_clause));
             clause_iter++;
         }
     }
 
+    void add_clause(Clause &&clause)
+    {
+        if (clause.to_decide_num() == 1)
+            unipropagateQueue.push_back(clause.get_clause_id());
+        clauses.push_back(clause);
+    }
+
     void update_clauses();
 
-    optional<ClauseID> assign(VariableID variableID, VariableValue variableValue)
+    /**
+     * @brief `assign` should be the way and the only way to assign a non-undecided value to a variable.
+     *
+     * @param variableID
+     * @param variableValue
+     * @return optional<ClauseID>
+     */
+    optional<ClauseID> assign(VariableID variableID, bool b_variableValue)
     {
+        auto variableValue = bool2variableValue(b_variableValue);
         auto oldValue = get_variable(variableID).value;
-        if (oldValue == variableValue)
-            return nullopt;
+        assert(oldValue == UNDECIDED);
 
         variables_by_value[oldValue].erase(variableID);
         variables_by_value[variableValue].insert(variableID);
@@ -377,13 +451,28 @@ public:
         optional<ClauseID> conflict_clause;
         // For consistency, even if a conflict is detected, the assignment should be performed for all clauses.
         for (auto &clauseID : get_variable(variableID).clauses)
-            if (!get_clause(clauseID).assign(variableID, variableValue) && !conflict_clause.has_value())
+            if (!get_clause(clauseID).assign(variableID, b_variableValue) && !conflict_clause.has_value())
                 conflict_clause = clauseID;
 
-        // Assignment to variable should be after Clause::asign, since Clause::asign uses the value of variables to determine the old value.
         get_variable(variableID).value = variableValue;
 
         return conflict_clause;
+    }
+
+    void reset(VariableID variableID)
+    {
+        auto oldValue = get_variable(variableID).value;
+        assert(oldValue != UNDECIDED);
+
+        assert(variables_by_value[oldValue].erase(variableID) == 1);
+        assert(variables_by_value[UNDECIDED].insert(variableID).second);
+
+        for (auto &clauseID : get_variable(variableID).clauses)
+            get_clause(clauseID).reset(variableID);
+
+        // Assignment to variable should be after Clause::reset, since Clause::reset uses the value of variables to determine the old value.
+        get_variable(variableID)
+            .value = UNDECIDED;
     }
 
     Variable &get_variable(VariableID variableID)
