@@ -1,17 +1,10 @@
 #include "sat_solver.hpp"
 
-SATSolver::Literal::Literal(SATSolver *sat_solver, VariableID variable, bool literal_type) : sat_solver(sat_solver), variableID(variable), literal_type(literal_type) {}
+SATSolver::Literal::Literal(SATSolver *sat_solver, VariableID variable, bool literal_type) : variableID(variable), sat_solver(sat_solver), literal_type(literal_type) {}
 
 SATSolver::VariableValue SATSolver::Literal::get_value() const
 {
-    auto &value = sat_solver->get_variable(variableID).value;
-    if (value == VariableValue::UNDECIDED)
-        return UNDECIDED;
-    else
-    {
-        bool b_value = value == VariableValue::TRUE;
-        return exclusive_or(literal_type, b_value) ? FALSE : TRUE;
-    }
+    return get_value_if(sat_solver->get_variable(variableID).value);
 }
 
 SATSolver::VariableID SATSolver::Literal::get_variable_id() const
@@ -19,12 +12,16 @@ SATSolver::VariableID SATSolver::Literal::get_variable_id() const
     return variableID;
 }
 
-template <typename Iterator>
 SATSolver::Clause::Clause(SATSolver &sat_solver, ClauseID clauseID) : sat_solver(sat_solver), clauseID(clauseID)
 {
 }
 
-auto SATSolver::Clause::add_literal(VariableID variableID, bool literal_type)
+pair<unordered_set<SATSolver::VariableID>::iterator, bool> SATSolver::Variable::add_clause(ClauseID clauseID)
+{
+    return clauses.insert(clauseID);
+}
+
+bool SATSolver::Clause::add_literal(VariableID variableID, bool literal_type)
 {
     return literals_by_value[sat_solver.get_variable(variableID).value].insert(variableID).second &&
            literals.insert({variableID, Literal(&sat_solver, variableID, literal_type)}).second;
@@ -51,52 +48,13 @@ void SATSolver::Clause::update()
             assert(literals_by_value[literals[literalID].get_value()].insert(literalID).second);
         }
     }
+
+    if (to_decide_num() == 1)
+        sat_solver.unipropagateQueue.push_back(clauseID);
 }
 
 SATSolver::Variable::Variable(SATSolver &sat_solver, VariableID variableID) : sat_solver(sat_solver), variableID(variableID), value(VariableValue::UNDECIDED)
 {
-}
-
-auto SATSolver::Variable::add_clause(ClauseID clauseID)
-{
-    return clauses.insert(clauseID);
-}
-
-template <typename Iterator>
-void SATSolver::initiate(Iterator clause_first, Iterator clause_last)
-{
-    unordered_map<size_t, VariableID> OriginalName2varID;
-    Iterator clause_iter{clause_first};
-    while (clause_iter != clause_last)
-    {
-        auto liter_iter = clause_iter->cbegin();
-        Clause cur_clause(*this);
-        ClauseID cur_clause_id = clauses.size();
-
-        while (liter_iter != clause_iter->cend())
-        {
-            auto res = OriginalName2varID.find(liter_iter->second);
-            VariableID cur_var_id;
-            if (res == OriginalName2varID.end())
-            // New variable
-            {
-                cur_var_id = VarID2originalName.size();
-                OriginalName2varID[liter_iter->second] = cur_var_id;
-                VarID2originalName.push_back(liter_iter->second);
-                variables.push_back(Variable(*this, cur_var_id));
-            }
-            else
-            {
-                cur_var_id = res->second;
-            }
-            get_variable(cur_var_id).add_clause(cur_clause_id);
-            cur_clause.add_literal(cur_var_id, liter_iter->first); // TODO insert may fail.
-            liter_iter++;
-        }
-        cur_clause.clauseID = cur_clause_id;
-        clauses.push_back(cur_clause);
-        clause_iter++;
-    }
 }
 
 void SATSolver::update_clauses()
@@ -105,6 +63,54 @@ void SATSolver::update_clauses()
         clause.update();
 }
 
+/**
+ * @brief NOTE If a conflict occurs, the unipropagation queue may not be consistent.
+ *
+ * @return optional<SATSolver::ClauseID>
+ */
+optional<SATSolver::ClauseID> SATSolver::unipropagate()
+{
+    while (!unipropagateQueue.empty())
+    {
+        ClauseID to_propagate_clause_id = unipropagateQueue.front();
+        auto &to_propagate_clause = get_clause(to_propagate_clause_id);
+
+        // The conflict detection should be done at the moment when the last variable assignment in this clause happens.
+        assert(!to_propagate_clause.is_conflict());
+
+        if (to_propagate_clause.value() == TRUE)
+        {
+            // Nothing to do
+        }
+        else
+        {
+            assert(to_propagate_clause.get_literals_by_value(UNDECIDED).size() == 1);
+            auto to_propagate_variable = to_propagate_clause.get_literals_by_value(UNDECIDED).begin().operator*();
+            auto &to_propagate_literal = to_propagate_clause.get_literal(to_propagate_variable);
+            bool to_assign_value = to_propagate_literal.get_literal_type();
+
+            auto assign_result = assign(to_propagate_variable, static_cast<VariableValue>(optional2variableValue(to_assign_value)));
+            // For consistency, even if a conflict is detected, the implication graph should be update.
+            implicationGraph.push_propagate(to_propagate_variable, to_propagate_clause_id);
+
+            if (assign_result.has_value())
+            {
+                /**
+                 * TODO Maintain unipropagation consistency
+                 *
+                 */
+                unipropagateQueue.clear();
+                return assign_result;
+            }
+        }
+        unipropagateQueue.pop_front();
+    }
+    return nullopt;
+}
+
 bool SATSolver::solve()
 {
+    if (unipropagate().has_value())
+        return false;
+    return true;
 }

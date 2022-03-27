@@ -3,10 +3,15 @@
 #include <unordered_set>
 #include <optional>
 #include <queue>
+#include <deque>
 #include <cassert>
 #include <iterator>
 #include <array>
-#include "../utils/utility.hpp"
+#include "utility.hpp"
+
+#ifndef SAT_SOLVER
+
+#define SAT_SOLVER
 
 using namespace std;
 
@@ -16,6 +21,7 @@ using namespace std;
  * TODO Modify accessibility
  *
  */
+
 class SATSolver
 {
 public:
@@ -48,16 +54,31 @@ public:
 
     public:
         VariableValue get_value() const;
+        VariableValue get_value_if(VariableValue variableValue) const
+        {
+            if (variableValue == VariableValue::UNDECIDED)
+                return UNDECIDED;
+            else
+            {
+                bool b_value = variableValue == VariableValue::TRUE;
+                return exclusive_or(literal_type, b_value) ? FALSE : TRUE;
+            }
+        }
         VariableID get_variable_id() const;
-        auto &get_variable() const
+        Variable &get_variable() const
         {
             return sat_solver->get_variable(get_variable_id());
         }
 
         Literal(SATSolver *sat_solver, VariableID variable, bool literal_type);
-        Literal() : sat_solver(nullptr), variableID(0), literal_type(false)
+        Literal() : variableID(0), sat_solver(nullptr), literal_type(false)
         {
             throw logic_error("The default constructor for SATSolver::Literal should never be called");
+        }
+
+        bool get_literal_type() const
+        {
+            return literal_type;
         }
     };
 
@@ -77,10 +98,9 @@ public:
         unordered_map<VariableID, Literal> literals;
 
     public:
-        template <typename Iterator>
         Clause(SATSolver &sat_solver, ClauseID clauseID);
 
-        auto add_literal(VariableID variableID, bool literal_type);
+        bool add_literal(VariableID variableID, bool literal_type);
 
         /**
          * @brief Update the values of literals in the clause according to the assignment of variables;
@@ -90,17 +110,42 @@ public:
          */
         void update();
 
-        void assign(VariableID variableID, VariableValue variableValue)
+        bool assign(VariableID variableID, VariableValue variableValue)
         {
             auto oldValue = sat_solver.get_variable(variableID).value;
             if (oldValue != variableValue)
             {
-                literals_by_value[oldValue].erase(variableID);
-                literals_by_value[variableValue].insert(variableID);
+                auto &literal = literals[variableID];
+                literals_by_value[literal.get_value_if(oldValue)].erase(variableID);
+                literals_by_value[literal.get_value_if(variableValue)].insert(variableID);
 
                 if (to_decide_num() == 1)
-                    sat_solver.unipropagateQueue.push(clauseID);
+                    sat_solver.unipropagateQueue.push_back(clauseID);
             }
+            if (is_conflict())
+                return false;
+            else
+                return true;
+        }
+
+        bool is_conflict()
+        {
+            return literals_by_value[UNDECIDED].size() == 0 && literals_by_value[TRUE].size() == 0;
+        }
+
+        VariableValue value()
+        {
+            if (!literals_by_value[TRUE].empty())
+                return TRUE;
+            else if (!literals_by_value[UNDECIDED].empty())
+                return UNDECIDED;
+            else
+                return FALSE;
+        }
+
+        const auto &get_literals_by_value(VariableValue variableValue)
+        {
+            return literals_by_value[variableValue];
         }
 
         size_t to_decide_num()
@@ -114,6 +159,11 @@ public:
         auto get_clause_id() const
         {
             return clauseID;
+        }
+
+        const auto &get_literal(VariableID variableID)
+        {
+            return literals[variableID];
         }
 
         const auto &get_literals() const
@@ -134,7 +184,7 @@ public:
         VariableValue value;
         Variable(SATSolver &sat_solver, VariableID variableID);
 
-        auto add_clause(ClauseID);
+        pair<unordered_set<SATSolver::VariableID>::iterator, bool> add_clause(ClauseID);
     };
 
     class ImplicationGraph
@@ -259,36 +309,81 @@ public:
     array<unordered_set<VariableID>, 3> variables_by_value;
     vector<Variable> variables;
 
-    queue<ClauseID> unipropagateQueue;
+    deque<ClauseID> unipropagateQueue;
     ImplicationGraph implicationGraph;
+
+    SATSolver() : implicationGraph(*this) {}
 
     /**
      * @brief Input specification: Container<Container<pair<bool, size_t>>>
      *
      * TODO Preprocess: currrently, we assert a variable appears in a clause at most once.
      *
+     * NOTE Since it's a template, I put the definition in the header.
+     *
      * @tparam Iterator
      * @param clause_first
      * @param clause_last
      */
     template <typename Iterator>
-    void initiate(Iterator clause_first, Iterator clause_last);
+    void initiate(Iterator clause_first, Iterator clause_last)
+    {
+        unordered_map<size_t, VariableID> OriginalName2varID;
+        Iterator clause_iter{clause_first};
+        while (clause_iter != clause_last)
+        {
+            auto liter_iter = clause_iter->cbegin();
+            ClauseID cur_clause_id = clauses.size();
+            Clause cur_clause(*this, cur_clause_id);
+
+            while (liter_iter != clause_iter->cend())
+            {
+                auto res = OriginalName2varID.find(liter_iter->second);
+                VariableID cur_var_id;
+                if (res == OriginalName2varID.end())
+                // New variable
+                {
+                    cur_var_id = VarID2originalName.size();
+                    OriginalName2varID[liter_iter->second] = cur_var_id;
+                    VarID2originalName.push_back(liter_iter->second);
+                    variables.push_back(Variable(*this, cur_var_id));
+                }
+                else
+                {
+                    cur_var_id = res->second;
+                }
+                get_variable(cur_var_id).add_clause(cur_clause_id);
+                cur_clause.add_literal(cur_var_id, liter_iter->first); // TODO insert may fail.
+                liter_iter++;
+            }
+            if (cur_clause.to_decide_num() == 1)
+                unipropagateQueue.push_back(cur_clause.get_clause_id());
+            clauses.push_back(cur_clause);
+            clause_iter++;
+        }
+    }
 
     void update_clauses();
 
-    void assign(VariableID variableID, VariableValue variableValue)
+    optional<ClauseID> assign(VariableID variableID, VariableValue variableValue)
     {
         auto oldValue = get_variable(variableID).value;
         if (oldValue == variableValue)
-            return;
+            return nullopt;
 
         variables_by_value[oldValue].erase(variableID);
         variables_by_value[variableValue].insert(variableID);
 
+        optional<ClauseID> conflict_clause;
+        // For consistency, even if a conflict is detected, the assignment should be performed for all clauses.
         for (auto &clauseID : get_variable(variableID).clauses)
-        {
-            get_clause(clauseID).assign(variableID, variableValue);
-        }
+            if (!get_clause(clauseID).assign(variableID, variableValue) && !conflict_clause.has_value())
+                conflict_clause = clauseID;
+
+        // Assignment to variable should be after Clause::asign, since Clause::asign uses the value of variables to determine the old value.
+        get_variable(variableID).value = variableValue;
+
+        return conflict_clause;
     }
 
     Variable &get_variable(VariableID variableID)
@@ -316,3 +411,5 @@ public:
      */
     bool solve();
 };
+
+#endif
