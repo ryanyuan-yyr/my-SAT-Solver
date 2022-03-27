@@ -1,10 +1,10 @@
 #include "sat_solver.hpp"
 
-SATSolver::Literal::Literal(SATSolver &sat_solver, VariableID variable, bool literal_type) : sat_solver(sat_solver), variableID(variable), literal_type(literal_type) {}
+SATSolver::Literal::Literal(SATSolver *sat_solver, VariableID variable, bool literal_type) : sat_solver(sat_solver), variableID(variable), literal_type(literal_type) {}
 
 SATSolver::VariableValue SATSolver::Literal::get_value() const
 {
-    auto &value = sat_solver.variables[variableID].value;
+    auto &value = sat_solver->get_variable(variableID).value;
     if (value == VariableValue::UNDECIDED)
         return UNDECIDED;
     else
@@ -24,10 +24,10 @@ SATSolver::Clause::Clause(SATSolver &sat_solver, ClauseID clauseID) : sat_solver
 {
 }
 
-auto SATSolver::Clause::add_literal(Literal liter)
+auto SATSolver::Clause::add_literal(VariableID variableID, bool literal_type)
 {
-    return literals_by_value[liter.get_variable().value].insert(liter.get_variable_id()).second &&
-           literals.insert({liter.get_variable_id(), liter}).second;
+    return literals_by_value[sat_solver.get_variable(variableID).value].insert(variableID).second &&
+           literals.insert({variableID, Literal(&sat_solver, variableID, literal_type)}).second;
 }
 
 void SATSolver::Clause::update()
@@ -89,9 +89,8 @@ void SATSolver::initiate(Iterator clause_first, Iterator clause_last)
             {
                 cur_var_id = res->second;
             }
-            Literal cur_liter(*this, cur_var_id, liter_iter->first);
-            variables[cur_var_id].add_clause(cur_clause_id);
-            cur_clause.add_literal(cur_liter); // TODO insert may fail.
+            get_variable(cur_var_id).add_clause(cur_clause_id);
+            cur_clause.add_literal(cur_var_id, liter_iter->first); // TODO insert may fail.
             liter_iter++;
         }
         cur_clause.clauseID = cur_clause_id;
