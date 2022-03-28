@@ -93,6 +93,13 @@ void SATSolver::Clause::change_assignment(VariableID variableID, VariableValue f
 bool SATSolver::Clause::assign(VariableID variableID, bool b_variableValue)
 {
     change_assignment(variableID, UNDECIDED, bool2variableValue(b_variableValue));
+    if (to_decide_num() == 0)
+        for (auto &literal : literals)
+        {
+            auto &pre_value = sat_solver.decisionPolicy.literal_statistics[{literal.second.get_literal_type(), literal.first}];
+            sat_solver.decisionPolicy.literal_statistics.modify({literal.second.get_literal_type(), literal.first}, {pre_value.first,
+                                                                                                                     pre_value.second - 1});
+        }
     if (to_decide_num() == 1)
         sat_solver.unipropagateQueue.push_back(clauseID);
     if (is_conflict())
@@ -103,6 +110,13 @@ bool SATSolver::Clause::assign(VariableID variableID, bool b_variableValue)
 
 void SATSolver::Clause::reset(VariableID variableID)
 {
+    if (to_decide_num() == 0)
+        for (auto &literal : literals)
+        {
+            auto &pre_value = sat_solver.decisionPolicy.literal_statistics[{literal.second.get_literal_type(), literal.first}];
+            sat_solver.decisionPolicy.literal_statistics.modify({literal.second.get_literal_type(), literal.first}, {pre_value.first,
+                                                                                                                  pre_value.second + 1});
+        }
     change_assignment(variableID, sat_solver.get_variable(variableID).value, UNDECIDED);
 }
 
@@ -176,7 +190,13 @@ optional<SATSolver::ClauseID> SATSolver::assign(VariableID variableID, bool b_va
         if (!get_clause(clauseID).assign(variableID, b_variableValue) && !conflict_clause.has_value())
             conflict_clause = clauseID;
 
-    get_variable(variableID).value = variableValue;
+    for (size_t i = 0; i < 2; i++)
+        if (decisionPolicy.literal_statistics.has({static_cast<bool>(i), variableID}))
+            decisionPolicy.literal_statistics.modify({static_cast<bool>(i), variableID}, {false,
+                                                                                          decisionPolicy.literal_statistics[{static_cast<bool>(i), variableID}].second});
+
+    get_variable(variableID)
+        .value = variableValue;
 
     return conflict_clause;
 }
@@ -191,7 +211,10 @@ void SATSolver::reset(VariableID variableID)
 
     for (auto &clauseID : get_variable(variableID).clauses)
         get_clause(clauseID).reset(variableID);
-
+    for (size_t i = 0; i < 2; i++)
+        if (decisionPolicy.literal_statistics.has({static_cast<bool>(i), variableID}))
+            decisionPolicy.literal_statistics.modify({static_cast<bool>(i), variableID}, {true,
+                                                                                          decisionPolicy.literal_statistics[{static_cast<bool>(i), variableID}].second});
     // Assignment to variable should be after Clause::reset, since Clause::reset uses the value of variables to determine the old value.
     get_variable(variableID)
         .value = UNDECIDED;

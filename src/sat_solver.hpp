@@ -10,6 +10,7 @@
 #include <iostream>
 #include <algorithm>
 #include <cstdlib>
+#include <functional>
 #include "utility.hpp"
 
 #ifndef SAT_SOLVER
@@ -264,23 +265,36 @@ public:
     };
 
     /**
-     * @brief TODO Dummie dicision policy for now.
+     * @brief
      *
      */
     class DecisionPolicy
     {
     private:
+        friend SATSolver;
+        friend Clause;
+
         SATSolver &sat_solver;
 
+        // For the value.first, true if UNDECIDED
+        ModifiableHeap<pair<bool, VariableID>, pair<bool, size_t>, hash_pair<bool, VariableID>, std::greater<pair<bool, size_t>>> literal_statistics;
+
     public:
-        DecisionPolicy(SATSolver &sat_solver) : sat_solver(sat_solver) {}
+        DecisionPolicy(SATSolver &sat_solver) : sat_solver(sat_solver)
+        {
+        }
 
         pair<VariableID, bool> operator()() const
         {
             sat_solver.statistic.decisionNum++;
-            return {sat_solver.variables_by_value[UNDECIDED].begin().operator*(), true};
 
-            // TODO
+            auto candidate = literal_statistics.top();
+            claim(candidate.first.first == true);
+
+            return {candidate.second.second, candidate.second.first};
+
+            // Obsolete Dummy decision policy
+            // return {sat_solver.variables_by_value[UNDECIDED].begin().operator*(), true};
         }
     };
 
@@ -337,8 +351,8 @@ public:
 
             while (liter_iter != clause_iter->cend())
             {
-                auto res = OriginalName2varID.find(liter_iter->second);
                 VariableID cur_var_id;
+                auto res = OriginalName2varID.find(liter_iter->second);
                 if (res == OriginalName2varID.end())
                 // New variable
                 {
@@ -353,11 +367,17 @@ public:
                     cur_var_id = res->second;
                 }
                 get_variable(cur_var_id).add_clause(cur_clause_id);
+                if (decisionPolicy.literal_statistics.has({liter_iter->first, cur_var_id}))
+                    claim(decisionPolicy.literal_statistics.modify({liter_iter->first, cur_var_id}, {true, decisionPolicy.literal_statistics[{liter_iter->first, cur_var_id}].second + 1}));
+                else
+                    // NOTE May not support invalid clauses
+                    claim(decisionPolicy.literal_statistics.insert({liter_iter->first, cur_var_id}, {true, 1}).second);
                 if (!cur_clause.add_literal(cur_var_id, liter_iter->first))
                 {
                     valid_clause = false;
+                    claim(("An invalid clause", false));
                     break;
-                }
+                    }
                 liter_iter++;
             }
             if (valid_clause)
@@ -370,6 +390,7 @@ public:
             clause_iter++;
         }
     }
+
 private:
     void add_clause(Clause &&clause)
     {
