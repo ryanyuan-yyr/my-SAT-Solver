@@ -49,21 +49,9 @@ public:
 
     public:
         VariableValue get_value() const;
-        VariableValue get_value_if(VariableValue variableValue) const
-        {
-            if (variableValue == VariableValue::UNDECIDED)
-                return UNDECIDED;
-            else
-            {
-                bool b_value = variableValue == VariableValue::TRUE;
-                return exclusive_or(literal_type, b_value) ? FALSE : TRUE;
-            }
-        }
+        VariableValue get_value_if(VariableValue variableValue) const;
         VariableID get_variable_id() const;
-        Variable &get_variable() const
-        {
-            return sat_solver->get_variable(get_variable_id());
-        }
+        Variable &get_variable() const;
 
         Literal(SATSolver *sat_solver, VariableID variable, bool literal_type);
         Literal() : variableID(0), sat_solver(nullptr), literal_type(false)
@@ -71,10 +59,7 @@ public:
             throw logic_error("The default constructor for SATSolver::Literal should never be called");
         }
 
-        bool get_literal_type() const
-        {
-            return literal_type;
-        }
+        bool get_literal_type() const;
     };
 
     class Clause
@@ -106,12 +91,7 @@ public:
         void update();
 
     private:
-        void change_assignment(VariableID variableID, VariableValue from, VariableValue to)
-        {
-            auto &literal = literals[variableID];
-            claim(literals_by_value[literal.get_value_if(from)].erase(variableID) == 1);
-            claim(literals_by_value[literal.get_value_if(to)].insert(variableID).second);
-        }
+        void change_assignment(VariableID variableID, VariableValue from, VariableValue to);
 
     public:
         /**
@@ -122,26 +102,11 @@ public:
          * @return true
          * @return false
          */
-        bool assign(VariableID variableID, bool b_variableValue)
-        {
-            change_assignment(variableID, UNDECIDED, bool2variableValue(b_variableValue));
-            if (to_decide_num() == 1)
-                sat_solver.unipropagateQueue.push_back(clauseID);
-            if (is_conflict())
-                return false;
-            else
-                return true;
-        }
+        bool assign(VariableID variableID, bool b_variableValue);
 
-        void reset(VariableID variableID)
-        {
-            change_assignment(variableID, sat_solver.get_variable(variableID).value, UNDECIDED);
-        }
+        void reset(VariableID variableID);
 
-        bool is_conflict()
-        {
-            return literals_by_value[UNDECIDED].size() == 0 && literals_by_value[TRUE].size() == 0;
-        }
+        bool is_conflict();
 
         VariableValue value()
         {
@@ -295,45 +260,7 @@ public:
          * @param conflict_clause
          * @return vector<Index>
          */
-        vector<Index> confilict_analysis(ClauseID conflict_clause)
-        {
-            auto &init_learnt_clause = sat_solver.get_clause(conflict_clause).get_literals();
-            claim(init_learnt_clause.find(stack.back().variableID) != init_learnt_clause.end());
-            unordered_set<Index> other_DL_nodes;
-            set<Index, std::greater<Index>> cur_DL_nodes;
-            for (auto &varID_literal : init_learnt_clause)
-            {
-                Index node_pos = var2pos[varID_literal.first];
-                if (stack[node_pos].decision_level == get_decision_level())
-                    cur_DL_nodes.insert(node_pos);
-                else
-                    other_DL_nodes.insert(node_pos);
-            }
-            claim(!cur_DL_nodes.empty());
-
-            while (cur_DL_nodes.size() > 1)
-            {
-                Index cur_node_pos = cur_DL_nodes.begin().operator*();
-                cur_DL_nodes.erase(cur_DL_nodes.begin());
-                auto &cur_clause_literals = sat_solver.get_clause(stack[cur_node_pos].derive_from.value()).get_literals();
-                for (auto &varID_literal : cur_clause_literals)
-                {
-                    auto var_id = varID_literal.first;
-                    if (var_id != stack[cur_node_pos].variableID)
-                    {
-                        if (stack[var2pos[var_id]].decision_level == get_decision_level())
-                            cur_DL_nodes.insert(var2pos[var_id]);
-                        else
-                            other_DL_nodes.insert(var2pos[var_id]);
-                    }
-                }
-            }
-            claim(cur_DL_nodes.size() == 1);
-            vector<Index> learnt_clause_pos;
-            learnt_clause_pos.push_back(cur_DL_nodes.begin().operator*());
-            copy(other_DL_nodes.begin(), other_DL_nodes.end(), back_inserter(learnt_clause_pos));
-            return learnt_clause_pos;
-        }
+        vector<Index> confilict_analysis(ClauseID conflict_clause);
     };
 
     /**
@@ -350,12 +277,22 @@ public:
 
         pair<VariableID, bool> operator()() const
         {
+            sat_solver.statistic.decisionNum++;
             return {sat_solver.variables_by_value[UNDECIDED].begin().operator*(), true};
 
             // TODO
         }
     };
 
+public:
+    struct Statistic
+    {
+        std::chrono::nanoseconds time_cost;
+        size_t decisionNum = 0;
+        size_t backjumpNum = 0;
+    };
+
+private:
     friend class DecisionPolicy;
 
     ostream &log_stream;
@@ -369,7 +306,9 @@ public:
     deque<ClauseID> unipropagateQueue;
     ImplicationGraph implicationGraph;
     DecisionPolicy decisionPolicy;
+    Statistic statistic;
 
+public:
     SATSolver(ostream &log_stream = cerr) : log_stream(log_stream), implicationGraph(*this), decisionPolicy(*this) {}
 
     /**
@@ -384,7 +323,7 @@ public:
      * @param clause_last
      */
     template <typename Iterator>
-    void initiate(Iterator clause_first, Iterator clause_last, int var_num = -1)
+    void initiate(Iterator clause_first, Iterator clause_last)
     {
         unordered_map<size_t, VariableID> OriginalName2varID;
         Iterator clause_iter{clause_first};
@@ -431,7 +370,7 @@ public:
             clause_iter++;
         }
     }
-
+private:
     void add_clause(Clause &&clause)
     {
         if (clause.to_decide_num() == 1)
@@ -448,41 +387,9 @@ public:
      * @param variableValue
      * @return optional<ClauseID>
      */
-    optional<ClauseID> assign(VariableID variableID, bool b_variableValue)
-    {
-        auto variableValue = bool2variableValue(b_variableValue);
-        auto oldValue = get_variable(variableID).value;
-        claim(oldValue == UNDECIDED);
+    optional<ClauseID> assign(VariableID variableID, bool b_variableValue);
 
-        variables_by_value[oldValue].erase(variableID);
-        variables_by_value[variableValue].insert(variableID);
-
-        optional<ClauseID> conflict_clause;
-        // For consistency, even if a conflict is detected, the assignment should be performed for all clauses.
-        for (auto &clauseID : get_variable(variableID).clauses)
-            if (!get_clause(clauseID).assign(variableID, b_variableValue) && !conflict_clause.has_value())
-                conflict_clause = clauseID;
-
-        get_variable(variableID).value = variableValue;
-
-        return conflict_clause;
-    }
-
-    void reset(VariableID variableID)
-    {
-        auto oldValue = get_variable(variableID).value;
-        claim(oldValue != UNDECIDED);
-
-        claim(variables_by_value[oldValue].erase(variableID) == 1);
-        claim(variables_by_value[UNDECIDED].insert(variableID).second);
-
-        for (auto &clauseID : get_variable(variableID).clauses)
-            get_clause(clauseID).reset(variableID);
-
-        // Assignment to variable should be after Clause::reset, since Clause::reset uses the value of variables to determine the old value.
-        get_variable(variableID)
-            .value = UNDECIDED;
-    }
+    void reset(VariableID variableID);
 
     Variable &get_variable(VariableID variableID)
     {
@@ -501,6 +408,7 @@ public:
      */
     optional<ClauseID> unipropagate();
 
+public:
     /**
      * @brief
      *
@@ -518,6 +426,11 @@ public:
             result[VarID2originalName[v.variableID]] = (v.value == TRUE);
         }
         return result;
+    }
+
+    auto get_statistics()
+    {
+        return statistic;
     }
 };
 

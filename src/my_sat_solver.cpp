@@ -54,7 +54,7 @@ struct TestcaseSpec
 
 int main()
 {
-    string testcases_root{"../tests/testcases/"};
+    string testcases_root{"tests/testcases/"};
     vector<TestcaseSpec> testcases{
         {"uf20-91", "uf20-0", 1, 1000},
         {"CBS_k3_n100_m403_b10", "CBS_k3_n100_m403_b10_", 0, 999}};
@@ -65,7 +65,7 @@ int main()
         claim(("Input file open", input));
         auto test = DIMACS2vec(input);
         SATSolver sat_solver;
-        sat_solver.initiate(test.first.begin(), test.first.end(), test.second);
+        sat_solver.initiate(test.first.begin(), test.first.end());
         auto start = high_resolution_clock::now();
         claim(("satisfy", sat_solver.solve()));
         auto stop = high_resolution_clock::now();
