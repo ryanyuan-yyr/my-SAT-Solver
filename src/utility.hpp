@@ -1,5 +1,13 @@
 #include <utility>
 #include <optional>
+#include <string>
+
+#define claim(X)                           \
+    if (!(X))                               \
+    {                                       \
+        std::cerr << "Assert fail" << endl; \
+        std::abort();                       \
+    }
 
 enum VariableValue
 {
