@@ -5,15 +5,14 @@
 #include <optional>
 #include <queue>
 #include <deque>
-#include <cassert>
 #include <iterator>
 #include <array>
 #include <iostream>
 #include <algorithm>
+#include <cstdlib>
 #include "utility.hpp"
 
 #ifndef SAT_SOLVER
-
 #define SAT_SOLVER
 
 using namespace std;
@@ -110,8 +109,8 @@ public:
         void change_assignment(VariableID variableID, VariableValue from, VariableValue to)
         {
             auto &literal = literals[variableID];
-            assert(literals_by_value[literal.get_value_if(from)].erase(variableID) == 1);
-            assert(literals_by_value[literal.get_value_if(to)].insert(variableID).second);
+            claim(literals_by_value[literal.get_value_if(from)].erase(variableID) == 1);
+            claim(literals_by_value[literal.get_value_if(to)].insert(variableID).second);
         }
 
     public:
@@ -154,9 +153,9 @@ public:
                 return FALSE;
         }
 
-        const auto &get_literals_by_value(VariableValue variableValue)
+        const auto &get_literals_by_value(VariableValue literalValue)
         {
-            return literals_by_value[variableValue];
+            return literals_by_value[literalValue];
         }
 
         size_t to_decide_num()
@@ -267,7 +266,7 @@ public:
             stack.push_back({variableID, get_decision_level(), derive_from});
 
             sat_solver.log_stream << "[Implication Graph] "
-                                  << "L" << get_decision_level() << " " << variableID << " " << sat_solver.get_variable(variableID).value << " \n";
+                                  << "L" << get_decision_level() << " " << sat_solver.VarID2originalName[variableID] << " " << sat_solver.get_variable(variableID).value << " \n";
         }
 
         void push_decision_node(VariableID variableID)
@@ -276,7 +275,7 @@ public:
             decision_points.push_back({stack.size()});
             stack.push_back({variableID, get_decision_level(), nullopt});
             sat_solver.log_stream << "[Implication Graph] "
-                                  << "L" << get_decision_level() << " " << variableID << " " << sat_solver.get_variable(variableID).value << " \n";
+                                  << "L" << get_decision_level() << " " << sat_solver.VarID2originalName[variableID] << " " << sat_solver.get_variable(variableID).value << " \n";
         }
 
         void pop()
@@ -284,7 +283,7 @@ public:
             auto &to_pop = stack.back();
             if (!to_pop.derive_from)
             {
-                assert(decision_points.back().decisionPos == stack.size() - 1);
+                claim(decision_points.back().decisionPos == stack.size() - 1);
                 decision_points.pop_back();
             }
             stack.pop_back();
@@ -299,7 +298,7 @@ public:
         vector<Index> confilict_analysis(ClauseID conflict_clause)
         {
             auto &init_learnt_clause = sat_solver.get_clause(conflict_clause).get_literals();
-            assert(init_learnt_clause.find(stack.back().variableID) != init_learnt_clause.end());
+            claim(init_learnt_clause.find(stack.back().variableID) != init_learnt_clause.end());
             unordered_set<Index> other_DL_nodes;
             set<Index, std::greater<Index>> cur_DL_nodes;
             for (auto &varID_literal : init_learnt_clause)
@@ -310,7 +309,7 @@ public:
                 else
                     other_DL_nodes.insert(node_pos);
             }
-            assert(!cur_DL_nodes.empty());
+            claim(!cur_DL_nodes.empty());
 
             while (cur_DL_nodes.size() > 1)
             {
@@ -329,7 +328,7 @@ public:
                     }
                 }
             }
-            assert(cur_DL_nodes.size() == 1);
+            claim(cur_DL_nodes.size() == 1);
             vector<Index> learnt_clause_pos;
             learnt_clause_pos.push_back(cur_DL_nodes.begin().operator*());
             copy(other_DL_nodes.begin(), other_DL_nodes.end(), back_inserter(learnt_clause_pos));
@@ -352,6 +351,8 @@ public:
         pair<VariableID, bool> operator()() const
         {
             return {sat_solver.variables_by_value[UNDECIDED].begin().operator*(), true};
+
+            // TODO
         }
     };
 
@@ -362,10 +363,6 @@ public:
     vector<size_t> VarID2originalName;
     vector<Clause> clauses;
 
-    /**
-     * @brief TODO make it a class. Implement function `change value of variables`
-     *
-     */
     array<unordered_set<VariableID>, 3> variables_by_value;
     vector<Variable> variables;
 
@@ -387,7 +384,7 @@ public:
      * @param clause_last
      */
     template <typename Iterator>
-    void initiate(Iterator clause_first, Iterator clause_last)
+    void initiate(Iterator clause_first, Iterator clause_last, int var_num = -1)
     {
         unordered_map<size_t, VariableID> OriginalName2varID;
         Iterator clause_iter{clause_first};
@@ -396,6 +393,8 @@ public:
             auto liter_iter = clause_iter->cbegin();
             ClauseID cur_clause_id = clauses.size();
             Clause cur_clause(*this, cur_clause_id);
+
+            bool valid_clause = true;
 
             while (liter_iter != clause_iter->cend())
             {
@@ -415,10 +414,20 @@ public:
                     cur_var_id = res->second;
                 }
                 get_variable(cur_var_id).add_clause(cur_clause_id);
-                cur_clause.add_literal(cur_var_id, liter_iter->first); // TODO insert may fail.
+                if (!cur_clause.add_literal(cur_var_id, liter_iter->first))
+                {
+                    valid_clause = false;
+                    break;
+                }
                 liter_iter++;
             }
-            add_clause(std::move(cur_clause));
+            if (valid_clause)
+                add_clause(std::move(cur_clause));
+            else
+            {
+                for (auto &variable : variables)
+                    variable.clauses.erase(cur_clause_id);
+            }
             clause_iter++;
         }
     }
@@ -443,7 +452,7 @@ public:
     {
         auto variableValue = bool2variableValue(b_variableValue);
         auto oldValue = get_variable(variableID).value;
-        assert(oldValue == UNDECIDED);
+        claim(oldValue == UNDECIDED);
 
         variables_by_value[oldValue].erase(variableID);
         variables_by_value[variableValue].insert(variableID);
@@ -462,10 +471,10 @@ public:
     void reset(VariableID variableID)
     {
         auto oldValue = get_variable(variableID).value;
-        assert(oldValue != UNDECIDED);
+        claim(oldValue != UNDECIDED);
 
-        assert(variables_by_value[oldValue].erase(variableID) == 1);
-        assert(variables_by_value[UNDECIDED].insert(variableID).second);
+        claim(variables_by_value[oldValue].erase(variableID) == 1);
+        claim(variables_by_value[UNDECIDED].insert(variableID).second);
 
         for (auto &clauseID : get_variable(variableID).clauses)
             get_clause(clauseID).reset(variableID);
@@ -493,12 +502,23 @@ public:
     optional<ClauseID> unipropagate();
 
     /**
-     * @brief TODO Preprocess, unipropagate before the first decision.
+     * @brief
      *
      * @return true SAT
      * @return false UNSAT
      */
     bool solve();
+
+    unordered_map<size_t, bool> get_result()
+    {
+        unordered_map<size_t, bool> result;
+        for (auto &v : variables)
+        {
+            claim(v.value != UNDECIDED);
+            result[VarID2originalName[v.variableID]] = (v.value == TRUE);
+        }
+        return result;
+    }
 };
 
 #endif

@@ -23,8 +23,16 @@ pair<unordered_set<SATSolver::VariableID>::iterator, bool> SATSolver::Variable::
 
 bool SATSolver::Clause::add_literal(VariableID variableID, bool literal_type)
 {
-    return literals_by_value[sat_solver.get_variable(variableID).value].insert(variableID).second &&
-           literals.insert({variableID, Literal(&sat_solver, variableID, literal_type)}).second;
+    auto insert_res = literals.insert({variableID, Literal(&sat_solver, variableID, literal_type)});
+    if (insert_res.second)
+    {
+        claim(literals_by_value[insert_res.first->second.get_value()].insert(variableID).second);
+        return true;
+    }
+    else if (insert_res.first->second.get_literal_type() == literal_type)
+        return true;
+    else
+        return false;
 }
 
 /**
@@ -49,7 +57,7 @@ void SATSolver::Clause::update()
         for (auto literalID : inconsistent_set[i])
         {
             literals_by_value[i].erase(literalID);
-            assert(literals_by_value[literals[literalID].get_value()].insert(literalID).second);
+            claim(literals_by_value[literals[literalID].get_value()].insert(literalID).second);
         }
     }
 }
@@ -78,7 +86,7 @@ optional<SATSolver::ClauseID> SATSolver::unipropagate()
         auto &to_propagate_clause = get_clause(to_propagate_clause_id);
 
         // The conflict detection should be done at the moment when the last variable assignment in this clause happens.
-        assert(!to_propagate_clause.is_conflict());
+        claim(!to_propagate_clause.is_conflict());
 
         if (to_propagate_clause.value() == TRUE)
         {
@@ -86,7 +94,7 @@ optional<SATSolver::ClauseID> SATSolver::unipropagate()
         }
         else
         {
-            assert(to_propagate_clause.get_literals_by_value(UNDECIDED).size() == 1);
+            claim(to_propagate_clause.get_literals_by_value(UNDECIDED).size() == 1);
             auto to_propagate_variable = to_propagate_clause.get_literals_by_value(UNDECIDED).begin().operator*();
             auto &to_propagate_literal = to_propagate_clause.get_literal(to_propagate_variable);
             bool to_assign_value = to_propagate_literal.get_literal_type();
@@ -113,7 +121,7 @@ bool SATSolver::solve()
         if (unipropagateQueue.empty())
         {
             auto decision = decisionPolicy();
-            assert(!assign(decision.first, decision.second).has_value());
+            claim(!assign(decision.first, decision.second).has_value());
             implicationGraph.push_decision_node(decision.first);
         }
 
@@ -121,25 +129,25 @@ bool SATSolver::solve()
         if (unipropagate_result.has_value())
         {
             auto conflict_result = implicationGraph.confilict_analysis(unipropagate_result.value());
-            assert(!conflict_result.empty());
+            claim(!conflict_result.empty());
             if (conflict_result == vector<Index>{0} && !implicationGraph[0].is_decision_node())
                 return false;
             else
             {
                 // Assert that current decision level cannot be 0;
                 // Otherwise conflict_result == {0} and stack[0] is not a decision node.
-                assert(implicationGraph.get_decision_level() != 0);
+                claim(implicationGraph.get_decision_level() != 0);
 
                 log_stream << "[Conflict analysis] ";
                 for (auto pos : conflict_result)
-                    log_stream << implicationGraph[pos].variableID << ", ";
+                    log_stream << VarID2originalName[implicationGraph[pos].variableID] << ", ";
                 log_stream << endl;
                 auto learnt_clause_id = clauses.size();
                 Clause learnt_clause(*this, learnt_clause_id);
                 for (auto pos : conflict_result)
                 {
                     auto var_id = implicationGraph[pos].variableID;
-                    learnt_clause.add_literal(var_id, !get_variable(var_id).value);
+                    claim(learnt_clause.add_literal(var_id, !get_variable(var_id).value));
                 }
                 learnt_clause.update();
                 for (auto literal : learnt_clause.get_literals())
@@ -148,7 +156,7 @@ bool SATSolver::solve()
                 }
 
                 add_clause(std::move(learnt_clause));
-                assert(unipropagateQueue.size() == 0);
+                claim(unipropagateQueue.size() == 0);
                 unipropagateQueue.push_back(learnt_clause_id);
                 /**
                  * @brief Backjump
