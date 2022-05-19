@@ -3,20 +3,20 @@
 #include <string>
 #include <chrono>
 
-#define claim(X)                                \
-    {                                           \
-        if (!(X))                               \
-        {                                       \
-            std::cerr << "Assert fail" << endl; \
-            std::abort();                       \
-        }                                       \
+#define claim(X)                                        \
+    {                                                   \
+        if (!(X))                                       \
+        {                                               \
+            std::cerr << "Assert fail: " << #X << endl; \
+            std::abort();                               \
+        }                                               \
     }
 
 enum VariableValue
 {
     FALSE,
     TRUE,
-    UNDECIDED,
+    UNASSIGNED,
 };
 
 bool exclusive_or(bool lhs, bool rhs);

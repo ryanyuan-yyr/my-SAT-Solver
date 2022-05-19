@@ -19,7 +19,7 @@ VariableValue optional2variableValue(std::optional<bool> value)
     if (value.has_value())
         return value.value() ? TRUE : FALSE;
     else
-        return UNDECIDED;
+        return UNASSIGNED;
 }
 
 VariableValue bool2variableValue(bool value)

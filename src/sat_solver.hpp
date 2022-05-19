@@ -69,7 +69,7 @@ public:
         ClauseID clauseID;
 
         // NOTE A variable should not appear more than once in a single clause
-        // NOTE array[TRUE] are the variables whose LITERALS in this clause are true.
+        // NOTE array[FALSE/TRUE/UNASSIGNED] are the variables whose LITERALS in this clause are true/false/unassigned.
         /**
          * value of literals -> literals_by_value <-> literals <-> variables
          *
@@ -112,8 +112,8 @@ public:
         {
             if (!literals_by_value[TRUE].empty())
                 return TRUE;
-            else if (!literals_by_value[UNDECIDED].empty())
-                return UNDECIDED;
+            else if (!literals_by_value[UNASSIGNED].empty())
+                return UNASSIGNED;
             else
                 return FALSE;
         }
@@ -128,7 +128,7 @@ public:
             if (literals_by_value[TRUE].size() != 0)
                 return 0;
             else
-                return literals_by_value[UNDECIDED].size();
+                return literals_by_value[UNASSIGNED].size();
         }
 
         auto get_clause_id() const
@@ -278,7 +278,7 @@ public:
         pair<VariableID, bool> operator()() const
         {
             sat_solver.statistic.decisionNum++;
-            return {sat_solver.variables_by_value[UNDECIDED].begin().operator*(), true};
+            return {sat_solver.variables_by_value[UNASSIGNED].begin().operator*(), true};
 
             // TODO
         }
@@ -303,13 +303,13 @@ private:
     array<unordered_set<VariableID>, 3> variables_by_value;
     vector<Variable> variables;
 
-    deque<ClauseID> unipropagateQueue;
-    ImplicationGraph implicationGraph;
-    DecisionPolicy decisionPolicy;
+    deque<ClauseID> unipropagate_queue;
+    ImplicationGraph implication_graph;
+    DecisionPolicy decision_policy;
     Statistic statistic;
 
 public:
-    SATSolver(ostream &log_stream = cerr) : log_stream(log_stream), implicationGraph(*this), decisionPolicy(*this) {}
+    SATSolver(ostream &log_stream = cerr) : log_stream(log_stream), implication_graph(*this), decision_policy(*this) {}
 
     /**
      * @brief Input specification: Container<Container<pair<bool, size_t>>>
@@ -346,7 +346,7 @@ public:
                     OriginalName2varID[liter_iter->second] = cur_var_id;
                     VarID2originalName.push_back(liter_iter->second);
                     variables.push_back(Variable(*this, cur_var_id));
-                    variables_by_value[UNDECIDED].insert(cur_var_id);
+                    variables_by_value[UNASSIGNED].insert(cur_var_id);
                 }
                 else
                 {
@@ -374,14 +374,14 @@ private:
     void add_clause(Clause &&clause)
     {
         if (clause.to_decide_num() == 1)
-            unipropagateQueue.push_back(clause.get_clause_id());
+            unipropagate_queue.push_back(clause.get_clause_id());
         clauses.push_back(clause);
     }
 
     void update_clauses();
 
     /**
-     * @brief `assign` should be the way and the only way to assign a non-undecided value to a variable.
+     * @brief `assign` should be the way and the only way to assign a non-unassigned value to a variable.
      *
      * @param variableID
      * @param variableValue
@@ -422,7 +422,7 @@ public:
         unordered_map<size_t, bool> result;
         for (auto &v : variables)
         {
-            claim(v.value != UNDECIDED);
+            claim(v.value != UNASSIGNED);
             result[VarID2originalName[v.variableID]] = (v.value == TRUE);
         }
         return result;

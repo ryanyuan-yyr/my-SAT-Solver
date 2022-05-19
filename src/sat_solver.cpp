@@ -9,8 +9,8 @@ VariableValue SATSolver::Literal::get_value() const
 
 VariableValue SATSolver::Literal::get_value_if(VariableValue variableValue) const
 {
-    if (variableValue == VariableValue::UNDECIDED)
-        return UNDECIDED;
+    if (variableValue == VariableValue::UNASSIGNED)
+        return UNASSIGNED;
     else
     {
         bool b_value = variableValue == VariableValue::TRUE;
@@ -92,9 +92,9 @@ void SATSolver::Clause::change_assignment(VariableID variableID, VariableValue f
 
 bool SATSolver::Clause::assign(VariableID variableID, bool b_variableValue)
 {
-    change_assignment(variableID, UNDECIDED, bool2variableValue(b_variableValue));
+    change_assignment(variableID, UNASSIGNED, bool2variableValue(b_variableValue));
     if (to_decide_num() == 1)
-        sat_solver.unipropagateQueue.push_back(clauseID);
+        sat_solver.unipropagate_queue.push_back(clauseID);
     if (is_conflict())
         return false;
     else
@@ -103,15 +103,15 @@ bool SATSolver::Clause::assign(VariableID variableID, bool b_variableValue)
 
 void SATSolver::Clause::reset(VariableID variableID)
 {
-    change_assignment(variableID, sat_solver.get_variable(variableID).value, UNDECIDED);
+    change_assignment(variableID, sat_solver.get_variable(variableID).value, UNASSIGNED);
 }
 
 bool SATSolver::Clause::is_conflict()
 {
-    return literals_by_value[UNDECIDED].size() == 0 && literals_by_value[TRUE].size() == 0;
+    return literals_by_value[UNASSIGNED].size() == 0 && literals_by_value[TRUE].size() == 0;
 }
 
-SATSolver::Variable::Variable(SATSolver &sat_solver, VariableID variableID) : sat_solver(sat_solver), variableID(variableID), value(VariableValue::UNDECIDED)
+SATSolver::Variable::Variable(SATSolver &sat_solver, VariableID variableID) : sat_solver(sat_solver), variableID(variableID), value(VariableValue::UNASSIGNED)
 {
 }
 
@@ -124,23 +124,23 @@ void SATSolver::update_clauses()
 vector<SATSolver::Index> SATSolver::ImplicationGraph::confilict_analysis(ClauseID conflict_clause)
 {
     auto &init_learnt_clause = sat_solver.get_clause(conflict_clause).get_literals();
-    claim(init_learnt_clause.find(stack.back().variableID) != init_learnt_clause.end());
-    unordered_set<Index> other_DL_nodes;
-    set<Index, std::greater<Index>> cur_DL_nodes;
+    // claim(init_learnt_clause.find(stack.back().variableID) != init_learnt_clause.end());
+    unordered_set<Index> other_decision_level_nodes;
+    set<Index, std::greater<Index>> cur_decision_level_nodes;
     for (auto &varID_literal : init_learnt_clause)
     {
         Index node_pos = var2pos[varID_literal.first];
         if (stack[node_pos].decision_level == get_decision_level())
-            cur_DL_nodes.insert(node_pos);
+            cur_decision_level_nodes.insert(node_pos);
         else
-            other_DL_nodes.insert(node_pos);
+            other_decision_level_nodes.insert(node_pos);
     }
-    claim(!cur_DL_nodes.empty());
+    claim(!cur_decision_level_nodes.empty());
 
-    while (cur_DL_nodes.size() > 1)
+    while (cur_decision_level_nodes.size() > 1)
     {
-        Index cur_node_pos = cur_DL_nodes.begin().operator*();
-        cur_DL_nodes.erase(cur_DL_nodes.begin());
+        Index cur_node_pos = cur_decision_level_nodes.begin().operator*();
+        cur_decision_level_nodes.erase(cur_decision_level_nodes.begin());
         auto &cur_clause_literals = sat_solver.get_clause(stack[cur_node_pos].derive_from.value()).get_literals();
         for (auto &varID_literal : cur_clause_literals)
         {
@@ -148,16 +148,16 @@ vector<SATSolver::Index> SATSolver::ImplicationGraph::confilict_analysis(ClauseI
             if (var_id != stack[cur_node_pos].variableID)
             {
                 if (stack[var2pos[var_id]].decision_level == get_decision_level())
-                    cur_DL_nodes.insert(var2pos[var_id]);
+                    cur_decision_level_nodes.insert(var2pos[var_id]);
                 else
-                    other_DL_nodes.insert(var2pos[var_id]);
+                    other_decision_level_nodes.insert(var2pos[var_id]);
             }
         }
     }
-    claim(cur_DL_nodes.size() == 1);
+    claim(cur_decision_level_nodes.size() == 1);
     vector<Index> learnt_clause_pos;
-    learnt_clause_pos.push_back(cur_DL_nodes.begin().operator*());
-    copy(other_DL_nodes.begin(), other_DL_nodes.end(), back_inserter(learnt_clause_pos));
+    learnt_clause_pos.push_back(cur_decision_level_nodes.begin().operator*());
+    copy(other_decision_level_nodes.begin(), other_decision_level_nodes.end(), back_inserter(learnt_clause_pos));
     return learnt_clause_pos;
 }
 
@@ -165,10 +165,10 @@ optional<SATSolver::ClauseID> SATSolver::assign(VariableID variableID, bool b_va
 {
     auto variableValue = bool2variableValue(b_variableValue);
     auto oldValue = get_variable(variableID).value;
-    claim(oldValue == UNDECIDED);
+    claim(oldValue == UNASSIGNED);
 
-    variables_by_value[oldValue].erase(variableID);
-    variables_by_value[variableValue].insert(variableID);
+    claim(variables_by_value[oldValue].erase(variableID) != 0);
+    claim(variables_by_value[variableValue].insert(variableID).second);
 
     optional<ClauseID> conflict_clause;
     // For consistency, even if a conflict is detected, the assignment should be performed for all clauses.
@@ -184,17 +184,17 @@ optional<SATSolver::ClauseID> SATSolver::assign(VariableID variableID, bool b_va
 void SATSolver::reset(VariableID variableID)
 {
     auto oldValue = get_variable(variableID).value;
-    claim(oldValue != UNDECIDED);
+    claim(oldValue != UNASSIGNED);
 
     claim(variables_by_value[oldValue].erase(variableID) == 1);
-    claim(variables_by_value[UNDECIDED].insert(variableID).second);
+    claim(variables_by_value[UNASSIGNED].insert(variableID).second);
 
     for (auto &clauseID : get_variable(variableID).clauses)
         get_clause(clauseID).reset(variableID);
 
     // Assignment to variable should be after Clause::reset, since Clause::reset uses the value of variables to determine the old value.
     get_variable(variableID)
-        .value = UNDECIDED;
+        .value = UNASSIGNED;
 }
 
 /**
@@ -205,13 +205,15 @@ void SATSolver::reset(VariableID variableID)
  */
 optional<SATSolver::ClauseID> SATSolver::unipropagate()
 {
-    while (!unipropagateQueue.empty())
+    while (!unipropagate_queue.empty())
     {
-        ClauseID to_propagate_clause_id = unipropagateQueue.front();
+        ClauseID to_propagate_clause_id = unipropagate_queue.front();
         auto &to_propagate_clause = get_clause(to_propagate_clause_id);
 
-        // The conflict detection should be done at the moment when the last variable assignment in this clause happens.
-        claim(!to_propagate_clause.is_conflict());
+        // // The conflict detection should be done at the moment when the last variable assignment in this clause happens.
+        // claim(!to_propagate_clause.is_conflict());
+        if (to_propagate_clause.is_conflict())
+            return to_propagate_clause_id;
 
         if (to_propagate_clause.value() == TRUE)
         {
@@ -219,91 +221,86 @@ optional<SATSolver::ClauseID> SATSolver::unipropagate()
         }
         else
         {
-            claim(to_propagate_clause.get_literals_by_value(UNDECIDED).size() == 1);
-            auto to_propagate_variable = to_propagate_clause.get_literals_by_value(UNDECIDED).begin().operator*();
+            claim(to_propagate_clause.get_literals_by_value(UNASSIGNED).size() == 1);
+            auto to_propagate_variable = to_propagate_clause.get_literals_by_value(UNASSIGNED).begin().operator*();
             auto &to_propagate_literal = to_propagate_clause.get_literal(to_propagate_variable);
             bool to_assign_value = to_propagate_literal.get_literal_type();
 
             auto assign_result = assign(to_propagate_variable, to_assign_value);
             // For consistency, even if a conflict is detected, the implication graph should be update.
-            implicationGraph.push_propagate(to_propagate_variable, to_propagate_clause_id);
+            implication_graph.push_propagate(to_propagate_variable, to_propagate_clause_id);
 
             if (assign_result.has_value())
             {
-                unipropagateQueue.clear();
+                unipropagate_queue.clear();
                 return assign_result;
             }
         }
-        unipropagateQueue.pop_front();
+        unipropagate_queue.pop_front();
     }
     return nullopt;
 }
 
 bool SATSolver::solve()
 {
-    while (!variables_by_value[UNDECIDED].empty())
+    if (unipropagate().has_value())
+        return false;
+    while (!variables_by_value[UNASSIGNED].empty())
     {
-        if (unipropagateQueue.empty())
+        if (unipropagate_queue.empty())
         {
-            auto decision = decisionPolicy();
+            auto decision = decision_policy();
             claim(!assign(decision.first, decision.second).has_value());
-            implicationGraph.push_decision_node(decision.first);
+            implication_graph.push_decision_node(decision.first);
         }
 
         auto unipropagate_result = unipropagate();
         if (unipropagate_result.has_value())
         {
-            auto conflict_result = implicationGraph.confilict_analysis(unipropagate_result.value());
+            auto conflict_result = implication_graph.confilict_analysis(unipropagate_result.value());
             claim(!conflict_result.empty());
-            if (conflict_result == vector<Index>{0} && !implicationGraph[0].is_decision_node())
+            if (implication_graph.get_decision_level() == 0)
                 return false;
-            else
+            log_stream << "[Conflict analysis] ";
+            for (auto pos : conflict_result)
+                log_stream << VarID2originalName[implication_graph[pos].variableID] << ", ";
+            log_stream << endl;
+            auto learnt_clause_id = clauses.size();
+            Clause learnt_clause(*this, learnt_clause_id);
+            for (auto pos : conflict_result)
             {
-                // Assert that current decision level cannot be 0;
-                // Otherwise conflict_result == {0} and stack[0] is not a decision node.
-                claim(implicationGraph.get_decision_level() != 0);
-
-                log_stream << "[Conflict analysis] ";
-                for (auto pos : conflict_result)
-                    log_stream << VarID2originalName[implicationGraph[pos].variableID] << ", ";
-                log_stream << endl;
-                auto learnt_clause_id = clauses.size();
-                Clause learnt_clause(*this, learnt_clause_id);
-                for (auto pos : conflict_result)
-                {
-                    auto var_id = implicationGraph[pos].variableID;
-                    claim(learnt_clause.add_literal(var_id, !get_variable(var_id).value));
-                }
-                learnt_clause.update();
-                for (auto literal : learnt_clause.get_literals())
-                {
-                    get_variable(literal.first).add_clause(learnt_clause_id);
-                }
-
-                add_clause(std::move(learnt_clause));
-                claim(unipropagateQueue.size() == 0);
-                unipropagateQueue.push_back(learnt_clause_id);
-                /**
-                 * @brief Backjump
-                 *
-                 */
-                statistic.backjumpNum++;
-                size_t backjump_decision_level;
-                if (conflict_result.size() == 1)
-                    backjump_decision_level = 0;
-                else
-                    backjump_decision_level = implicationGraph[std::max_element(conflict_result.cbegin() + 1, conflict_result.cend()).operator*()].decision_level;
-
-                while (implicationGraph.get_decision_level() > backjump_decision_level)
-                {
-                    reset(implicationGraph.back().variableID);
-                    implicationGraph.pop();
-                }
-
-                log_stream << "[Backjump] "
-                           << "L" << backjump_decision_level << " "
-                           << "stack depth: " << implicationGraph.size() << endl;
+                auto var_id = implication_graph[pos].variableID;
+                claim(learnt_clause.add_literal(var_id, !get_variable(var_id).value));
             }
+            learnt_clause.update();
+            for (auto literal : learnt_clause.get_literals())
+            {
+                get_variable(literal.first).add_clause(learnt_clause_id);
+            }
+
+            add_clause(std::move(learnt_clause));
+            unipropagate_queue.push_back(learnt_clause_id);
+            /**
+             * @brief Backjump
+             *
+             */
+            statistic.backjumpNum++;
+            size_t backjump_decision_level;
+            if (conflict_result.size() == 1)
+                backjump_decision_level = 0;
+            else
+                backjump_decision_level = implication_graph[std::max_element(conflict_result.cbegin() + 1, conflict_result.cend()).operator*()].decision_level;
+
+            while (implication_graph.get_decision_level() > backjump_decision_level)
+            {
+                reset(implication_graph.back().variableID);
+                implication_graph.pop();
+            }
+
+            log_stream << "[Backjump] "
+                       << "L" << backjump_decision_level << " "
+                       << "stack depth: " << implication_graph.size() << endl;
+            // }
         }
     }
 
